@@ -55,6 +55,7 @@ export class TechNewsHubStack extends Stack {
 
     const accessLogsTable = new dynamodb.Table(this, 'AccessLogsTable', {
       partitionKey: { name: 'sessionId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'timestamp', type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: 'ttl',
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
@@ -76,6 +77,13 @@ export class TechNewsHubStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
       timeToLiveAttribute: 'expiresAt',
+    });
+
+    const webSocketSessionsTable = new dynamodb.Table(this, 'WebSocketSessionsTable', {
+      partitionKey: { name: 'connectionId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
+      timeToLiveAttribute: 'ttl',
     });
 
     const apiSecrets = new secretsmanager.Secret(this, 'ApiSecrets', {
@@ -154,6 +162,7 @@ export class TechNewsHubStack extends Stack {
         CONTENT_CACHE_TABLE_NAME: contentCacheTable.tableName,
         API_SECRET_ARN: apiSecrets.secretArn,
         DISTRIBUTION_DOMAIN: distribution.domainName,
+        WEBSOCKET_SESSIONS_TABLE_NAME: webSocketSessionsTable.tableName,
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
     };
@@ -190,6 +199,40 @@ export class TechNewsHubStack extends Stack {
       ...commonLambdaProps,
     });
 
+    const profileMeFunction = new lambdaNodejs.NodejsFunction(this, 'ProfileMeFunction', {
+      entry: path.join(__dirname, '../lambda/profileMe.ts'),
+      handler: 'handler',
+      ...commonLambdaProps,
+    });
+
+    const searchFunction = new lambdaNodejs.NodejsFunction(this, 'SearchFunction', {
+      entry: path.join(__dirname, '../lambda/searchHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.seconds(45),
+      memorySize: 1536,
+      ...commonLambdaProps,
+    });
+
+    const recommendationsFunction = new lambdaNodejs.NodejsFunction(this, 'RecommendationsFunction', {
+      entry: path.join(__dirname, '../lambda/recommendations.ts'),
+      handler: 'handler',
+      ...commonLambdaProps,
+    });
+
+    const relatedContentFunction = new lambdaNodejs.NodejsFunction(this, 'RelatedContentFunction', {
+      entry: path.join(__dirname, '../lambda/relatedContent.ts'),
+      handler: 'handler',
+      timeout: Duration.seconds(45),
+      memorySize: 1536,
+      ...commonLambdaProps,
+    });
+
+    const websocketManagerFunction = new lambdaNodejs.NodejsFunction(this, 'WebsocketManagerFunction', {
+      entry: path.join(__dirname, '../lambda/websocketManager.ts'),
+      handler: 'handler',
+      ...commonLambdaProps,
+    });
+
     accessLogsTable.grantReadWriteData(geoEnrichFunction);
     userProfilesTable.grantReadWriteData(authCallbackFunction);
     userProfilesTable.grantReadData(fetchNewsFunction);
@@ -197,12 +240,20 @@ export class TechNewsHubStack extends Stack {
     contentCacheTable.grantReadWriteData(fetchNewsFunction);
     contentCacheTable.grantReadWriteData(fetchPatentsFunction);
     contentCacheTable.grantReadWriteData(dailyRefreshFunction);
+    contentCacheTable.grantReadData(relatedContentFunction);
 
     apiSecrets.grantRead(fetchNewsFunction);
     apiSecrets.grantRead(fetchPatentsFunction);
     apiSecrets.grantRead(geoEnrichFunction);
     apiSecrets.grantRead(authCallbackFunction);
     apiSecrets.grantRead(dailyRefreshFunction);
+    apiSecrets.grantRead(searchFunction);
+    apiSecrets.grantRead(relatedContentFunction);
+
+    accessLogsTable.grantReadData(recommendationsFunction);
+    userProfilesTable.grantReadData(profileMeFunction);
+    webSocketSessionsTable.grantReadWriteData(websocketManagerFunction);
+    webSocketSessionsTable.grantReadData(dailyRefreshFunction);
 
     const restApi = new apigw.RestApi(this, 'TechNewsHubApi', {
       defaultCorsPreflightOptions: {
@@ -230,10 +281,41 @@ export class TechNewsHubStack extends Stack {
     const authResource = restApi.root.addResource('auth');
     authResource.addMethod('POST', new apigw.LambdaIntegration(authCallbackFunction));
 
+    const profileResource = restApi.root.addResource('profile');
+    const profileMeResource = profileResource.addResource('me');
+    profileMeResource.addMethod('GET', new apigw.LambdaIntegration(profileMeFunction));
+
+    const searchResource = restApi.root.addResource('search');
+    searchResource.addMethod('POST', new apigw.LambdaIntegration(searchFunction));
+
+    const recommendationsResource = restApi.root.addResource('recommendations');
+    recommendationsResource.addMethod('POST', new apigw.LambdaIntegration(recommendationsFunction));
+
+    const contentResource = restApi.root.addResource('content');
+    const sectionResource = contentResource.addResource('{section}');
+    const periodResource = sectionResource.addResource('{period}');
+    const contentItemResource = periodResource.addResource('{itemId}');
+    contentItemResource.addMethod('GET', new apigw.LambdaIntegration(relatedContentFunction));
+
     const websocketApi = new apigwv2.WebSocketApi(this, 'TechNewsHubWebsocketApi', {
-      connectRouteOptions: { integration: new apigwv2Integrations.WebSocketLambdaIntegration('ConnectIntegration', geoEnrichFunction) },
-      defaultRouteOptions: { integration: new apigwv2Integrations.WebSocketLambdaIntegration('DefaultIntegration', geoEnrichFunction) },
-      disconnectRouteOptions: { integration: new apigwv2Integrations.WebSocketLambdaIntegration('DisconnectIntegration', geoEnrichFunction) },
+      connectRouteOptions: {
+        integration: new apigwv2Integrations.WebSocketLambdaIntegration(
+          'ConnectIntegration',
+          websocketManagerFunction,
+        ),
+      },
+      defaultRouteOptions: {
+        integration: new apigwv2Integrations.WebSocketLambdaIntegration(
+          'DefaultIntegration',
+          websocketManagerFunction,
+        ),
+      },
+      disconnectRouteOptions: {
+        integration: new apigwv2Integrations.WebSocketLambdaIntegration(
+          'DisconnectIntegration',
+          websocketManagerFunction,
+        ),
+      },
     });
 
     const websocketStage = new apigwv2.WebSocketStage(this, 'TechNewsHubWebsocketStage', {

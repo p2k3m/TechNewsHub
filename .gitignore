@@ -2,3 +2,5 @@ node_modules/
 infrastructure/node_modules/
 infrastructure/cdk.out/
 infrastructure/dist/
+frontend/node_modules/
+frontend/dist/
