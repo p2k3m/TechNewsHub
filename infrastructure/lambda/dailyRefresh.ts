@@ -1,5 +1,7 @@
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 
 interface RefreshEventDetail {
   sections?: string[];
@@ -14,6 +16,22 @@ const stepFunctionsClient = new SFNClient({});
 const websocketClient = websocketEndpoint
   ? new ApiGatewayManagementApiClient({ endpoint: websocketEndpoint })
   : undefined;
+
+const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const websocketTableName = process.env.WEBSOCKET_SESSIONS_TABLE_NAME ?? '';
+
+async function listActiveConnections(): Promise<string[]> {
+  if (!websocketTableName) {
+    return [];
+  }
+  const result = await docClient.send(
+    new ScanCommand({
+      TableName: websocketTableName,
+      ProjectionExpression: 'connectionId',
+    }),
+  );
+  return (result.Items ?? []).map((item) => item.connectionId as string).filter(Boolean);
+}
 
 export const handler = async (event: { detail?: RefreshEventDetail }) => {
   const detail = event?.detail ?? {};
@@ -36,7 +54,11 @@ export const handler = async (event: { detail?: RefreshEventDetail }) => {
     }),
   );
 
-  if (websocketClient && Array.isArray(detail.connections)) {
+  const connections = Array.isArray(detail.connections)
+    ? detail.connections
+    : await listActiveConnections();
+
+  if (websocketClient && connections.length > 0) {
     const payload = JSON.stringify({
       type: 'refresh',
       message: 'TechNewsHub content refresh triggered',
@@ -45,7 +67,7 @@ export const handler = async (event: { detail?: RefreshEventDetail }) => {
     });
 
     await Promise.allSettled(
-      detail.connections.map((connectionId) =>
+      connections.map((connectionId) =>
         websocketClient.send(
           new PostToConnectionCommand({
             ConnectionId: connectionId,

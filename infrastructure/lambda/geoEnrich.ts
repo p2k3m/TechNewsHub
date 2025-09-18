@@ -19,6 +19,7 @@ interface GeoResponse {
   location: string;
   weather: string;
   temperature: string;
+  sessionId: string;
 }
 
 interface SecretsShape {
@@ -94,11 +95,16 @@ async function fetchWeather(lat?: number, lng?: number): Promise<{ location: str
   }
 }
 
-async function storeAccessLog(event: APIGatewayProxyEventV2, payload: GeoPayload, location: string) {
-  if (!tableName) {
-    return;
-  }
+async function storeAccessLog(
+  event: APIGatewayProxyEventV2,
+  payload: GeoPayload,
+  location: string,
+): Promise<string> {
   const sessionId = payload.sessionId ?? cryptoRandomId();
+
+  if (!tableName) {
+    return sessionId;
+  }
   const timestamp = new Date().toISOString();
   const ttlSeconds = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7;
   const ip = event.requestContext?.http?.sourceIp ?? '0.0.0.0';
@@ -125,6 +131,7 @@ async function storeAccessLog(event: APIGatewayProxyEventV2, payload: GeoPayload
       },
     }),
   );
+  return sessionId;
 }
 
 function cryptoRandomId(): string {
@@ -135,7 +142,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const payload = parseBody(event);
   const weather = await fetchWeather(payload.lat, payload.lng);
 
-  await storeAccessLog(event, payload, weather.location);
+  const sessionId = await storeAccessLog(event, payload, weather.location);
 
   const now = new Date();
   const response: GeoResponse = {
@@ -144,6 +151,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     location: weather.location,
     weather: weather.weather,
     temperature: weather.temperature,
+    sessionId,
   };
 
   return {
