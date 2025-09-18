@@ -1,0 +1,37 @@
+{
+  "name": "technewshub-infrastructure",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rm -rf cdk.out",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy",
+    "lint": "tsc --noEmit",
+    "test": "npm run build"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.126",
+    "@types/node": "^20.12.7",
+    "@types/uuid": "^9.0.7",
+    "@types/ua-parser-js": "^0.7.39",
+    "aws-cdk": "^2.129.0",
+    "aws-cdk-lib": "^2.129.0",
+    "constructs": "^10.3.0",
+    "esbuild": "^0.20.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.533.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.533.0",
+    "@aws-sdk/client-sfn": "^3.533.0",
+    "@aws-sdk/client-secrets-manager": "^3.533.0",
+    "@aws-sdk/lib-dynamodb": "^3.533.0",
+    "axios": "^1.6.8",
+    "source-map-support": "^0.5.21",
+    "ua-parser-js": "^1.0.37",
+    "uuid": "^9.0.1"
+  }
+}
