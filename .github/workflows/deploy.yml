@@ -18,6 +18,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate required secrets
+        shell: bash
+        env:
+          AWS_OIDC_ROLE_ARN: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          SITE_BUCKET_NAME: ${{ secrets.SITE_BUCKET_NAME }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+
+          check_secret() {
+            local name="$1"
+            local hint="$2"
+            local value="${!name:-}"
+            if [ -z "$value" ]; then
+              missing+=("$name :: $hint")
+              printf '::error title=Missing secret::%s is required. %s\n' "$name" "$hint"
+            fi
+          }
+
+          check_secret "AWS_OIDC_ROLE_ARN" "Create an IAM role with GitHub OIDC trust that can deploy the TechNewsHub stack. See https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html"
+          check_secret "AWS_ACCOUNT_ID" "Set this to the 12-digit AWS account identifier that hosts the TechNewsHub infrastructure."
+          check_secret "SITE_BUCKET_NAME" "After the first CDK deploy, capture the generated S3 bucket name for the static site from CloudFormation outputs and store it as this secret."
+          check_secret "CLOUDFRONT_DISTRIBUTION_ID" "Capture the CloudFront distribution ID produced by the CDK stack (e.g., via aws cloudfront list-distributions) so the workflow can invalidate cached assets."
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            {
+              echo "The following GitHub secrets are missing:"
+              printf '  - %s\n' "${missing[@]}"
+              echo
+              echo "Populate each secret in the repository settings (Settings → Secrets and variables → Actions → New repository secret) and re-run the workflow."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "All required GitHub secrets are present." | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
